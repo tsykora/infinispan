@@ -24,6 +24,7 @@ package org.infinispan.loaders;
 
 import org.infinispan.Cache;
 import org.infinispan.config.Configuration;
+import org.infinispan.context.Flag;
 import org.infinispan.loaders.dummy.DummyInMemoryCacheStore;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
@@ -52,7 +53,7 @@ public class SharedCacheStoreTest extends MultipleCacheManagersTest {
 
    private List<CacheStore> cachestores() {
       List<CacheStore> l = new LinkedList<CacheStore>();
-      for (Cache<?, ?> c: caches())
+      for (Cache<?, ?> c : caches())
          l.add(TestingUtil.extractComponent(c, CacheLoaderManager.class).getCacheStore());
       return l;
    }
@@ -63,25 +64,39 @@ public class SharedCacheStoreTest extends MultipleCacheManagersTest {
       // the second and third cache are only started here
       // so state transfer will copy the key to the other caches
       // however is should not write it to the cache store again
-      for (Cache<Object, Object> c: caches())
+      for (Cache<Object, Object> c : caches())
          assert "value".equals(c.get("key"));
 
-      for (CacheStore cs: cachestores()) {
+      for (CacheStore cs : cachestores()) {
          assert cs.containsKey("key");
          DummyInMemoryCacheStore dimcs = (DummyInMemoryCacheStore) cs;
-         assert dimcs.stats().get("clear") == 0: "Cache store should not be cleared, purgeOnStartup is false";
-         assert dimcs.stats().get("store") == 1: "Cache store should have been written to just once, but was written to " + dimcs.stats().get("store") + " times";
+         assert dimcs.stats().get("clear") == 0 : "Cache store should not be cleared, purgeOnStartup is false";
+         assert dimcs.stats().get("store") == 1 : "Cache store should have been written to just once, but was written to " + dimcs.stats().get("store") + " times";
       }
 
       cache(0).remove("key");
 
-      for (Cache<Object, Object> c: caches())
+      for (Cache<Object, Object> c : caches())
          assert c.get("key") == null;
 
-      for (CacheStore cs: cachestores()) {
+      for (CacheStore cs : cachestores()) {
          assert !cs.containsKey("key");
          DummyInMemoryCacheStore dimcs = (DummyInMemoryCacheStore) cs;
-         assert dimcs.stats().get("remove") == 1: "Entry should have been removed from the cache store just once, but was removed " + dimcs.stats().get("store") + " times";
+         assert dimcs.stats().get("remove") == 1 : "Entry should have been removed from the cache store just once, but was removed " + dimcs.stats().get("store") + " times";
+      }
+   }
+
+   public void testSkipSharedCacheStoreFlagUsage() throws CacheLoaderException {
+      cache(0).getAdvancedCache().withFlags(Flag.SKIP_SHARED_CACHE_STORE).put("key", "value");
+      assert cache(0).get("key").equals("value");
+
+      // after test am I doing some purging on cache store? Obviously YES!
+      // yes I am doing clean up!!! that is problem - avoid it.
+
+      for (CacheStore cs : cachestores()) {
+         assert !cs.containsKey("key");
+         DummyInMemoryCacheStore dimcs = (DummyInMemoryCacheStore) cs;
+         assert dimcs.stats().get("store") == 0 : "Cache store should NOT contain any entry. Put was with SKIP_SHARED_CACHE_STORE flag.";
       }
    }
 
