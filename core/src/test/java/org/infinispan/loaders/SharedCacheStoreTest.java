@@ -28,12 +28,14 @@ import org.infinispan.context.Flag;
 import org.infinispan.loaders.dummy.DummyInMemoryCacheStore;
 import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.testng.annotations.Test;
 
 import java.util.LinkedList;
 import java.util.List;
 
 @Test (testName = "loaders.SharedCacheStoreTest", groups = "functional")
+@CleanupAfterMethod
 public class SharedCacheStoreTest extends MultipleCacheManagersTest {
 
    @Override
@@ -89,9 +91,6 @@ public class SharedCacheStoreTest extends MultipleCacheManagersTest {
    public void testSkipSharedCacheStoreFlagUsage() throws CacheLoaderException {
       cache(0).getAdvancedCache().withFlags(Flag.SKIP_SHARED_CACHE_STORE).put("key", "value");
       assert cache(0).get("key").equals("value");
-
-      // after test am I doing some purging on cache store? Obviously YES!
-      // yes I am doing clean up!!! that is problem - avoid it.
 
       for (CacheStore cs : cachestores()) {
          assert !cs.containsKey("key");
