@@ -32,6 +32,7 @@ import org.infinispan.loaders.dummy.DummyInMemoryCacheStore;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.SingleCacheManagerTest;
 import org.infinispan.test.TestingUtil;
+import org.infinispan.test.fwk.CleanupAfterMethod;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.test.fwk.TestInternalCacheEntryFactory;
 import org.testng.annotations.Test;
@@ -50,9 +51,11 @@ import static org.testng.Assert.assertEquals;
  *
  * @author Manik Surtani
  * @author Sanne Grinovero
+ * @author Tomas Sykora
  * @version 4.1
  */
 @Test(testName = "loaders.UnnnecessaryLoadingTest", groups = "functional", sequential = true)
+@CleanupAfterMethod
 public class UnnnecessaryLoadingTest extends SingleCacheManagerTest {
    CacheStore store;
 
@@ -169,10 +172,6 @@ public class UnnnecessaryLoadingTest extends SingleCacheManagerTest {
    }
 
    public void testRemoveDataOnStopFlagUsage() throws CacheLoaderException {
-
-      //Cache<Object, Object> cache = cacheManager.getCache();
-      //CacheStore store = TestingUtil.extractComponent(cache, CacheLoaderManager.class).getCacheStore();
-
       cache.put("k1", "v1");
       assert "v1".equals(cache.get("k1"));
       assert store.containsKey("k1") : "Does NOT contain k1 key.";
