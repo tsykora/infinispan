@@ -23,6 +23,7 @@
 package org.infinispan.api.mvcc;
 
 import static org.infinispan.context.Flag.CACHE_MODE_LOCAL;
+import static org.infinispan.context.Flag.PUT_FOR_EXTERNAL_READ;
 import static org.infinispan.test.TestingUtil.k;
 import static org.infinispan.test.TestingUtil.v;
 import static org.mockito.Matchers.anyBoolean;
@@ -47,6 +48,7 @@ import org.infinispan.Cache;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.config.Configuration;
+import org.infinispan.context.Flag;
 import org.infinispan.remoting.rpc.ResponseFilter;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcManager;
@@ -109,6 +111,29 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
       assertEquals("PFER should have been a no-op", value, cache2.get(key));
    }
 
+   /**
+    * Test for checking Flag.PUT_FOR_EXTERNAL_READ flag. Checking the no-op case.
+    */
+   public void testNoOpWhenKeyPresentWithFlag() {
+      final Cache cache1 = cache(0, "replSync");
+      final Cache cache2 = cache(1, "replSync");
+
+      cache1.put(key, value);
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return value.equals(cache1.get(key)) && value.equals(cache2.get(key));
+         }
+      });
+
+      // now this pfer should be a no-op
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value2);
+
+      assertEquals("PFER should have been a no-op", value, cache1.get(key));
+      assertEquals("PFER should have been a no-op", value, cache2.get(key));
+   }
+
    private List<Address> anyAddresses() {
       anyObject();
       return null;
@@ -156,6 +181,47 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
       });
    }
 
+   /**
+    * Test for testing Flag.PUT_FOR_EXTERNAL_READ flag. The case is the same as the test testTxSuspension().
+    * @throws Exception
+    */
+   public void testTxSuspensionWithFlag() throws Exception {
+      final Cache cache1 = cache(0, "replSync");
+      final Cache cache2 = cache(1, "replSync");
+
+      cache1.put(key + "0", value);
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return value.equals(cache2.get(key+"0"));
+         }
+      });
+
+      // start a tx and do some stuff.
+      tm(0, "replSync").begin();
+      cache1.get(key + "0");
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      Transaction t = tm(0, "replSync").suspend();
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return value.equals(cache1.get(key)) && value.equals(cache2.get(key));
+         }
+      });
+
+      tm(0, "replSync").resume(t);
+      tm(0, "replSync").commit();
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return value.equals(cache1.get(key + "0")) && value.equals(cache2.get(key + "0"));
+         }
+      });
+   }
+
 
    public void testExceptionSuppression() throws Exception {
       Cache cache1 = cache(0, "replSync");
@@ -179,7 +245,7 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
          when(mockTransport.getViewId()).thenReturn(originalTransport.getViewId());
 
          when(mockTransport.invokeRemotely(anyAddresses(), (CacheRpcCommand) anyObject(), anyResponseMode(),
-                                             anyLong(), anyBoolean(), (ResponseFilter) anyObject()))
+                                           anyLong(), anyBoolean(), (ResponseFilter) anyObject()))
                .thenThrow(new RuntimeException("Barf!"));
 
          try {
@@ -201,6 +267,16 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
 
          // should not barf
          cache1.putForExternalRead(key, value);
+
+         /** ------------------- Testing the same feature with Flag.PUT_FOR_EXTERNAL_READ **/
+         try {
+            cache1.remove(key);
+            fail("Should have barfed");
+         }
+         catch (RuntimeException re) {
+         }
+
+         cache1.getAdvancedCache().withFlags(Flag.FAIL_SILENTLY, Flag.PUT_FOR_EXTERNAL_READ).put( key, value );
       }
       finally {
          if (rpcManager != null) rpcManager.setTransport(originalTransport);
@@ -230,12 +306,47 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
    }
 
    /**
+    * Tests for Flag.PUT_FOR_EXTERNAL_READ - basic propagation case as implemented above.
+    * @throws Exception
+    */
+   public void testBasicPropagationWithFlag() throws Exception {
+      Cache cache1 = cache(0, "replSync");
+      Cache cache2 = cache(1, "replSync");
+
+      assert !cache1.containsKey(key);
+      assert !cache2.containsKey(key);
+      ReplListener replListener2 = replListener(cache2);
+
+      replListener2.expect(PutKeyValueCommand.class);
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      replListener2.waitForRpc();
+
+      assertEquals("PFER updated cache1", value, cache1.get(key));
+      assertEquals("PFER propagated to cache2 as expected", value, cache2.get(key));
+
+      // replication to cache 1 should NOT happen.
+      cache2.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value + "0");
+
+      assertEquals("PFER updated cache2", value, cache2.get(key));
+      assertEquals("Cache1 should be unaffected", value, cache1.get(key));
+   }
+
+   /**
     * Tests that setting a cacheModeLocal=true flag prevents propagation of the putForExternalRead().
     *
     * @throws Exception
     */
    public void testSimpleCacheModeLocal(Method m) throws Exception {
       cacheModeLocalTest(false, m);
+   }
+
+   /**
+    * Tests that setting a cacheModeLocal=true & putForExternalRead flags prevent propagation of the putForExternalRead().
+    *
+    * @throws Exception
+    */
+   public void testSimpleCacheModeLocalWithFlag(Method m) throws Exception {
+      cacheModeLocalTestWithFlag(false, m);
    }
 
    /**
@@ -246,6 +357,16 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
     */
    public void testCacheModeLocalInTx(Method m) throws Exception {
       cacheModeLocalTest(true, m);
+   }
+
+   /**
+    * Tests that setting a cacheModeLocal=true & putForExternalRead flags prevent propagation of the putForExternalRead() when the call
+    * occurs inside a transaction.
+    *
+    * @throws Exception
+    */
+   public void testCacheModeLocalInTxWithFlag(Method m) throws Exception {
+      cacheModeLocalTestWithFlag(true, m);
    }
 
    /**
@@ -323,10 +444,97 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
       });
    }
 
+   /**
+    * Tests that suspended transactions do not leak.
+    *
+    * The tests are added for verifying the same functionality as it is in previous test for PUT_FOR_EXTERNAL_READ flag.
+    */
+   public void testMemLeakOnSuspendedTransactionsWithFlag() throws Exception {
+      Cache cache1 = cache(0, "replSync");
+      Cache cache2 = cache(1, "replSync");
+      TransactionManager tm1 = TestingUtil.getTransactionManager(cache1);
+      TransactionManager tm2 = TestingUtil.getTransactionManager(cache2);
+      ReplListener replListener2 = replListener(cache2);
+
+      replListener2.expect(PutKeyValueCommand.class);
+      tm1.begin();
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      tm1.commit();
+      replListener2.waitForRpc();
+
+      final TransactionTable tt1 = TestingUtil.extractComponent(cache1, TransactionTable.class);
+      final TransactionTable tt2 = TestingUtil.extractComponent(cache2, TransactionTable.class);
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return tt1.getRemoteTxCount() == 0 && tt1.getLocalTxCount() == 0 &&
+                  tt2.getRemoteTxCount() == 0 && tt2.getLocalTxCount() == 0;
+         }
+      });
+
+      replListener2.expectWithTx(PutKeyValueCommand.class);
+      tm1.begin();
+      assertEquals(tm1.getTransaction().getStatus(), Status.STATUS_ACTIVE);
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      assertEquals(tm1.getTransaction().getStatus(), Status.STATUS_ACTIVE);
+      cache1.put(key, value);
+      assertEquals(tm1.getTransaction().getStatus(), Status.STATUS_ACTIVE);
+      log.info("Before commit!!");
+      tm1.commit();
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return (tt1.getRemoteTxCount() == 0) && (tt1.getLocalTxCount() == 0) &&  (tt2.getRemoteTxCount() == 0)
+                  && (tt2.getLocalTxCount() == 0);
+         }
+      });
+
+      replListener2.expectWithTx(PutKeyValueCommand.class);
+      tm1.begin();
+      cache1.put(key, value);
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      tm1.commit();
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return (tt1.getRemoteTxCount() == 0) && (tt1.getLocalTxCount() == 0) &&  (tt2.getRemoteTxCount() == 0)
+                  && (tt2.getLocalTxCount() == 0);
+         }
+      });
+
+      replListener2.expectWithTx(PutKeyValueCommand.class, PutKeyValueCommand.class);
+      tm1.begin();
+      cache1.put(key, value);
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      cache1.put(key, value);
+      tm1.commit();
+
+      eventually(new Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return (tt1.getRemoteTxCount() == 0) && (tt1.getLocalTxCount() == 0) &&  (tt2.getRemoteTxCount() == 0)
+                  && (tt2.getLocalTxCount() == 0);
+         }
+      });
+   }
+
    public void testMultipleIdenticalPutForExternalReadCalls() {
       Cache cache1 = cache(0, "replSync");
       cache1.putForExternalRead(key, value);
       cache1.putForExternalRead(key, value2);
+      assertEquals(value, cache1.get(key));
+   }
+
+   /**
+    * Tests the multiple identical put using PUT_FOR_EXTERNAL_READ flag.
+    */
+   public void testMultipleIdenticalPutForExternalReadCallsWithFlag() {
+      Cache cache1 = cache(0, "replSync");
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value);
+      cache1.getAdvancedCache().withFlags(Flag.PUT_FOR_EXTERNAL_READ).put(key, value2);
       assertEquals(value, cache1.get(key));
    }
 
@@ -344,6 +552,27 @@ public class PutForExternalReadTest extends MultipleCacheManagersTest {
 
       String k = k(m);
       cache1.getAdvancedCache().withFlags(CACHE_MODE_LOCAL).putForExternalRead(k, v(m));
+      assertFalse(cache2.containsKey(k));
+
+      if (transactional)
+         tm1.commit();
+   }
+
+   /**
+    * Tests that setting a cacheModeLocal=true and putForExternalRead flag which
+    * should prevent propagation of the putForExternalRead().
+    *
+    * @throws Exception
+    */
+   private void cacheModeLocalTestWithFlag(boolean transactional, Method m) throws Exception {
+      Cache<Object, Object> cache1 = cache(0, "replSync");
+      Cache<Object, Object> cache2 = cache(1, "replSync");
+      TransactionManager tm1 = TestingUtil.getTransactionManager(cache1);
+      if (transactional)
+         tm1.begin();
+
+      String k = k(m);
+      cache1.getAdvancedCache().withFlags(CACHE_MODE_LOCAL, PUT_FOR_EXTERNAL_READ).put(k, v(m));
       assertFalse(cache2.containsKey(k));
 
       if (transactional)
