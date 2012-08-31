@@ -862,4 +862,12 @@ public interface Log extends BasicLogger {
    @Message(value = "While stopping a cache or cache manager, one of its components failed to stop", id = 189)
    void componentFailedToStop(@Cause Throwable e);
 
+   @LogMessage(level = WARN)
+   @Message(value = "Use of the 'loader' element to configure a store is deprecated, please use the 'store' element instead", id = 190)
+   void deprecatedLoaderAsStoreConfiguration();
+
+   @LogMessage(level = DEBUG)
+   @Message(value = "When indexing locally a cache with shared cache loader, preload must be enabled", id = 191)
+   void localIndexingWithSharedCacheLoaderRequiresPreload();
+
 }
