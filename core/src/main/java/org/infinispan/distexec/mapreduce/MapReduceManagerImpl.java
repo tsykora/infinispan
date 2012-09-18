@@ -75,7 +75,7 @@ public class MapReduceManagerImpl implements MapReduceManager {
    }
    
    @Inject
-   public void init(EmbeddedCacheManager cacheManager,  CacheLoaderManager cacheLoaderManager) {     
+   public void init(EmbeddedCacheManager cacheManager, CacheLoaderManager cacheLoaderManager) {
       this.cacheManager = cacheManager;
       this.cacheLoaderManager = cacheLoaderManager;
       this.localAddress = cacheManager.getAddress();
@@ -155,7 +155,7 @@ public class MapReduceManagerImpl implements MapReduceManager {
       DefaultCollector<KOut, VOut> collector = new DefaultCollector<KOut, VOut>();
       log.tracef("For m/r task %s invoking %s with input keys %s",  mcc.getTaskId(), mcc, inputKeys);
       try {
-         taskLifecycleService.onPreExecute(mapper);
+         taskLifecycleService.onPreExecute(mapper, cache);
          for (KIn key : inputKeys) {           
             VIn value = cache.get(key);
             mapper.map(key, value, collector);

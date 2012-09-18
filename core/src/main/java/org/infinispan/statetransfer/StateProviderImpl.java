@@ -76,8 +76,8 @@ public class StateProviderImpl implements StateProvider {
    private long timeout;
    private int chunkSize;
 
-   private int topolopyId;
-   private ConsistentHash readCh;
+   private volatile int topolopyId;
+   private volatile ConsistentHash readCh;
 
    /**
     * A map that keeps track of current outbound state transfers by source address. There could be multiple transfers
@@ -181,7 +181,7 @@ public class StateProviderImpl implements StateProvider {
       }
    }
 
-   public List<TransactionInfo> getTransactionsForSegments(Address destination, int topologyId, Set<Integer> segments) {
+   public List<TransactionInfo> getTransactionsForSegments(Address destination, int topologyId, Set<Integer> segments) throws InterruptedException {
       if (trace) {
          log.tracef("Received request for transactions from node %s for segments %s with topology id %d", destination, segments, topologyId);
       }
@@ -193,6 +193,7 @@ public class StateProviderImpl implements StateProvider {
       //todo [anistor] here we should block until topologyId is installed so we are sure forwarding happens correctly
       if (topologyId != this.topolopyId) {
          log.warnf("Transactions were requested by a node with topology (%d) that does not match local topology (%d).", topologyId, this.topolopyId);
+         stateTransferLock.waitForTopology(topologyId);
       }
       Set<Integer> ownedSegments = readCh.getSegmentsForOwner(rpcManager.getAddress());
       if (!ownedSegments.containsAll(segments)) {
@@ -282,8 +283,10 @@ public class StateProviderImpl implements StateProvider {
       synchronized (transfersByDestination) {
          List<OutboundTransferTask> transferTasks = transfersByDestination.get(destination);
          if (transferTasks != null) {
-            for (OutboundTransferTask transferTask : transferTasks) {
-               transferTask.cancelSegments(segments);
+            // get an array copy of the collection to avoid ConcurrentModificationException if the entire task gets cancelled and removeTransfer(transferTask) is called
+            OutboundTransferTask[] tasks = transferTasks.toArray(new OutboundTransferTask[transferTasks.size()]);
+            for (OutboundTransferTask transferTask : tasks) {
+               transferTask.cancelSegments(segments); //this can potentially result in a removeTransfer(transferTask)
             }
          }
       }

@@ -35,6 +35,7 @@ import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.configuration.global.LegacyGlobalConfigurationAdaptor;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
 import org.infinispan.configuration.parsing.ParserRegistry;
+import org.infinispan.factories.ComponentRegistry;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.InternalCacheFactory;
 import org.infinispan.factories.annotations.SurvivesRestarts;
@@ -47,6 +48,7 @@ import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.lifecycle.Lifecycle;
+import org.infinispan.loaders.CacheLoaderManager;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.Address;
@@ -74,9 +76,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantLock;
-
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 /**
  * A <tt>CacheManager</tt> is the primary mechanism for retrieving a {@link Cache} instance, and is often used as a
@@ -132,7 +131,6 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
    private final ConcurrentMap<String, CacheWrapper> caches = ConcurrentMapFactory.makeConcurrentMap();
    private final ConcurrentMap<String, Configuration> configurationOverrides = ConcurrentMapFactory.makeConcurrentMap();
    private final GlobalComponentRegistry globalComponentRegistry;
-   private final ReentrantLock cacheCreateLock;
    private volatile boolean stopping;
 
    /**
@@ -300,7 +298,6 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
       this.globalConfiguration = globalConfiguration == null ? new GlobalConfigurationBuilder().build() : globalConfiguration;
       this.defaultConfiguration = defaultConfiguration == null ? new ConfigurationBuilder().build() : defaultConfiguration;
       this.globalComponentRegistry = new GlobalComponentRegistry(this.globalConfiguration, this, caches.keySet());
-      this.cacheCreateLock = new ReentrantLock();
       if (start)
          start();
    }
@@ -376,7 +373,6 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
          }
 
          globalComponentRegistry = new GlobalComponentRegistry(globalConfiguration, this, caches.keySet());
-         cacheCreateLock = new ReentrantLock();
       } catch (ConfigurationException ce) {
          throw ce;
       } catch (RuntimeException re) {
@@ -417,10 +413,8 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
       }
 
       globalComponentRegistry = new GlobalComponentRegistry(this.globalConfiguration, this, caches.keySet());
-      cacheCreateLock = new ReentrantLock();
-
-   if (start)
-      start();
+      if (start)
+         start();
    }
 
 
@@ -596,18 +590,22 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
 
    @Override
    public void removeCache(String cacheName) {
-      RemoveCacheCommand cmd = new RemoveCacheCommand(cacheName, this, globalComponentRegistry);
-      Transport transport = getTransport();
-      try {
-         if (transport != null) {
-            Configuration c = getConfiguration(cacheName);
-            // Use sync replication timeout
-            transport.invokeRemotely(null, cmd, ResponseMode.SYNCHRONOUS, c.clustering().sync().replTimeout(), false, null);
+      ComponentRegistry cacheComponentRegistry = globalComponentRegistry.getNamedComponentRegistry(cacheName);
+      if (cacheComponentRegistry != null) {
+         RemoveCacheCommand cmd = new RemoveCacheCommand(cacheName, this, globalComponentRegistry,
+               cacheComponentRegistry.getComponent(CacheLoaderManager.class));
+         Transport transport = getTransport();
+         try {
+            if (transport != null) {
+               Configuration c = getConfiguration(cacheName);
+               // Use sync replication timeout
+               transport.invokeRemotely(null, cmd, ResponseMode.SYNCHRONOUS, c.clustering().sync().replTimeout(), false, null);
+            }
+            // Once sent to the cluster, remove the local cache
+            cmd.perform(null);
+         } catch (Throwable t) {
+            throw new CacheException("Error removing cache", t);
          }
-         // Once sent to the cluster, remove the local cache
-         cmd.perform(null);
-      } catch (Throwable t) {
-         throw new CacheException("Error removing cache", t);
       }
    }
 
@@ -651,19 +649,10 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
       final boolean trace = log.isTraceEnabled();
       LogFactory.pushNDC(cacheName, trace);
       try {
-         Cache<K, V> cache = wireCache(cacheName);
+         Cache<K, V> cache = wireAndStartCache(cacheName);
          // a null return value means the cache was created by someone else before we got the lock
          if (cache == null)
             return caches.get(cacheName).getCache();
-
-         // start the cache-level components
-         try {
-            cache.start();
-         } finally {
-            // allow other threads to access the cache
-            caches.get(cacheName).latch.countDown();
-         }
-
          return cache;
       } finally {
          LogFactory.popNDC(trace);
@@ -673,38 +662,36 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
    /**
     * @return a null return value means the cache was created by someone else before we got the lock
     */
-   private <K, V> Cache<K, V> wireCache(String cacheName) {
-      boolean acquired = false;
-      try {
-         if (!cacheCreateLock.tryLock(defaultConfiguration.locking().lockAcquisitionTimeout(), MILLISECONDS)) {
-            throw new CacheException("Unable to acquire lock on cache with name " + cacheName);
+   private <K, V> Cache<K, V> wireAndStartCache(String cacheName) {
+      CacheWrapper cacheWrapper;
+
+      synchronized (caches) {
+         //fetch it again with the lock held
+         cacheWrapper = caches.get(cacheName);
+         if (cacheWrapper != null) {
+            return null; //signal that the cache was created by someone else
          }
-         acquired = true;
-         CacheWrapper existingCache = caches.get(cacheName);
-         if (existingCache != null)
-            return null;
-
-         // start the global components here, while we have the global lock
-         // do it before we have created the CacheWrapper, so that we don't have to clean it up in case of a failure
-         globalComponentRegistry.start();
-
-         Configuration c = getConfiguration(cacheName);
-
-         Cache<K, V> cache = new InternalCacheFactory<K, V>().createCache(c, globalComponentRegistry, cacheName);
-         CacheWrapper cw = new CacheWrapper(cache);
-         existingCache = caches.put(cacheName, cw);
-         if (existingCache != null) {
+         cacheWrapper = new CacheWrapper();
+         if (caches.put(cacheName, cacheWrapper) != null) {
             throw new IllegalStateException("attempt to initialize the cache twice");
          }
-
-         return cache;
-      } catch (InterruptedException e) {
-         Thread.currentThread().interrupt();
-         throw new CacheException("Interrupted while trying to get lock on cache with cache name " + cacheName, e);
-      } finally {
-         if (acquired)
-            cacheCreateLock.unlock();
       }
+
+      globalComponentRegistry.start();
+      Configuration c = getConfiguration(cacheName);
+
+      log.tracef("About to wire and start cache %s", cacheName);
+      Cache<K, V> cache = new InternalCacheFactory<K, V>().createCache(c, globalComponentRegistry, cacheName);
+      cacheWrapper.setCache(cache);
+
+      // start the cache-level components
+      try {
+         cache.start();
+      } finally {
+         // allow other threads to access the cache
+         cacheWrapper.latch.countDown();
+      }
+      return cache;
    }
 
    private Configuration getConfiguration(String cacheName) {
@@ -764,10 +751,9 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
    }
 
    private void unregisterCacheMBean(Cache<?, ?> cache) {
-      if (cache.getCacheConfiguration().jmxStatistics().enabled()) {
-         cache.getAdvancedCache().getComponentRegistry().getComponent(CacheJmxRegistration.class)
-                 .unregisterCacheMBean();
-      }
+      // Unregister cache mbean regardless of jmx statistics setting
+      cache.getAdvancedCache().getComponentRegistry().getComponent(CacheJmxRegistration.class)
+              .unregisterCacheMBean();
    }
 
    @Override
@@ -987,10 +973,10 @@ public class DefaultCacheManager implements EmbeddedCacheManager, CacheManager {
    }
 
    private final static class CacheWrapper {
-      private final Cache<?, ?> cache;
+      private volatile Cache<?, ?> cache;
       private final CountDownLatch latch = new CountDownLatch(1);
 
-      private CacheWrapper(Cache<?, ?> cache) {
+      public void setCache(Cache<?, ?> cache) {
          this.cache = cache;
       }
 
