@@ -1,7 +1,44 @@
 <project name="testsuite" basedir="." default="create-all-distros">
 
     <taskdef resource="net/sf/antcontrib/antlib.xml" classpath="${test_classpath}" />
+
     <property name="default.transform" value="${resources.dir}/config/xslt/config-modifier.xsl" />
+    <property name="config.modifier.domain.version" value="${config.modifier.domain.version}"/>
+
+    <!-- if desired, choose the right config-modifier for xmlns="urn:jboss:domain:version" -->
+    <if>
+        <equals arg1="${config.modifier.domain.version}" arg2="1.4" />
+        <then>
+            <echo message="config modifier for 1.4 domain version"/>
+            <property name="default.transform" value="${resources.dir}/config/xslt/config-modifier-14.xsl" />
+        </then>
+        <else>
+            <echo message="nothing to do, else for 1.4 (${config.modifier.domain.version} version is set)"/>
+        </else>
+    </if>
+
+    <if>
+        <equals arg1="${config.modifier.domain.version}" arg2="1.5" />
+        <then>
+            <echo message="config modifier for 1.5 domain version"/>
+            <property name="default.transform" value="${resources.dir}/config/xslt/config-modifier-15.xsl" />
+        </then>
+        <else>
+            <echo message="nothing to do, else for 1.5 (${config.modifier.domain.version} version is set)"/>
+        </else>
+    </if>
+
+    <if>
+        <equals arg1="${config.modifier.domain.version}" arg2="1.6" />
+        <then>
+            <echo message="config modifier for 1.6 domain version"/>
+            <property name="default.transform" value="${resources.dir}/config/xslt/config-modifier-16.xsl" />
+        </then>
+        <else>
+            <echo message="nothing to do, else for 1.6 (${config.modifier.domain.version} version is set)"/>
+        </else>
+    </if>
+
     <property name="default.transform.rest" value="${resources.dir}/config/xslt/rest-sec-config-modifier.xsl" />
     <property name="server1.configs" value="${server1.dist}/standalone/configuration" />
     <property name="server2.configs" value="${server2.dist}/standalone/configuration" />
