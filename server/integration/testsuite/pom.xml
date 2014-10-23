@@ -6,7 +6,7 @@
     <parent>
         <groupId>org.infinispan.server</groupId>
         <artifactId>infinispan-server-versions</artifactId>
-        <version>7.0.0-SNAPSHOT</version>
+        <version>6.2.0.ER2-redhat-1</version>
         <relativePath>../versions/pom.xml</relativePath>
     </parent>
 
