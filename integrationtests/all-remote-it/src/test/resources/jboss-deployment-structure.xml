@@ -1,0 +1,22 @@
+<jboss-deployment-structure>
+    <deployment>
+        <!--<exclusions>-->
+            <!--<module name="org.infinispan" />-->
+            <!--<module name="org.jgroups" />-->
+        <!--</exclusions>-->
+        <dependencies>
+
+            <!-- TODO!!!!!! how about this? make it to uber jar??? -->
+            <!--<module name="org.infinispan" />-->
+            <!--<module name="org.infinispan.cdi" meta-inf="import" />-->
+            <!--<module name="org.infinispan.cdi" />-->
+            <!--<module name="org.jgroups" />-->
+
+            <module name="javaee.api"/>
+            <module name="javax.faces.api"/>
+
+            <!--<module name="javax.cache"/>-->
+            <!--<module name="javax.annotation"/>-->
+        </dependencies>
+    </deployment>
+</jboss-deployment-structure>

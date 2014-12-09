@@ -31,6 +31,13 @@
         <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-remote</artifactId>
+            <!--<version>6.2.0.ER7-redhat-1</version>-->
+        </dependency>
+
+        <dependency>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-embedded</artifactId>
+            <!--<version>6.2.0.ER7-redhat-1</version>-->
         </dependency>
 
         <!-- TODO: find out - SHOULD I remove this or I can have this here? Class path pollution? -->
@@ -97,6 +104,27 @@
                 </exclusion>
             </exclusions>
         </dependency>
+
+
+
+        <!-- Various CDI dependencies, not sure we want them here -->
+        <!-- TODO: Throw this away??? -->
+        <dependency>
+            <groupId>javax.cache</groupId>
+            <artifactId>cache-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+
+
+        <!--<dependency>-->
+            <!--<groupId>org.infinispan</groupId>-->
+            <!--<artifactId>infinispan-cdi</artifactId>-->
+            <!--<scope>provided</scope>-->
+        <!--</dependency>-->
+
+
+
         <!-- for antrun plugin to be able to work with IFs -->
         <dependency>
             <groupId>ant-contrib</groupId>
@@ -135,11 +163,55 @@
         <log4j.configuration>log4j.xml</log4j.configuration>
 
         <resources.dir>${basedir}/src/test/resources</resources.dir>
+
+        <version.wildfly>8.1.0.Final</version.wildfly>
     </properties>
 
 
     <build>
         <plugins>
+
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>unpack</id>
+                        <phase>generate-test-resources</phase>
+                        <goals>
+                            <goal>unpack</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.wildfly</groupId>
+                                    <artifactId>wildfly-dist</artifactId>
+                                    <version>${version.wildfly}</version>
+                                    <type>zip</type>
+                                    <overWrite>false</overWrite>
+                                    <outputDirectory>${project.build.directory}</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.infinispan</groupId>
+                                    <artifactId>infinispan-as-client-modules</artifactId>
+                                    <version>${project.version}</version>
+                                    <type>zip</type>
+                                    <overWrite>false</overWrite>
+                                    <outputDirectory>${project.build.directory}/wildfly-${version.wildfly}/modules</outputDirectory>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+
+
+
+
+
+
+
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-antrun-plugin</artifactId>
@@ -176,6 +248,7 @@
                         <server.jvm.args>${server.jvm.args}</server.jvm.args>
                         <hotrod.protocol.version>${hotrod.protocol.version}</hotrod.protocol.version>
                         <log4j.configuration>${log4j.configuration}</log4j.configuration>
+                        <version.wildfly>${version.wildfly}</version.wildfly>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

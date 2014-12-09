@@ -18,6 +18,30 @@
             <!--</configuration>-->
         <!--</container>-->
 
+
+        <!-- we need this one for CDI test for deploying test.war file -->
+
+        <engine>
+            <property name="deploymentExportPath">target/</property>
+        </engine>
+
+        <container qualifier="jboss" default="true" mode="suite">
+            <protocol type="jmx-as7">
+                <property name="executionType">REMOTE</property>
+            </protocol>
+            <configuration>
+                <property name="jbossHome">${basedir}/target/wildfly-${version.wildfly}</property>
+                <property name="serverConfig">standalone-full.xml</property>
+                <!-- To debug the Arquillian managed application server: -->
+                <!-- property name="javaVmArguments">-Xrunjdwp:transport=dt_socket,address=8000,server=y,suspend=y -Xmx512m -XX:MaxPermSize=128m</property -->
+                <property name="javaVmArguments">-Djboss.node.name=remote-client -Djboss.socket.binding.port-offset=100</property>
+                <property name="managementPort">10090</property>
+
+                 <!-- ADD MANAGEMENT ADDRESS HERE -->
+            </configuration>
+        </container>
+
+
         <!-- TODO: the question here.... -->
         <!-- TODO: let it to be dependant on server testsuite build? On those generated config files? -->
         <!-- TODO: or we want to add the second config modifier here???
